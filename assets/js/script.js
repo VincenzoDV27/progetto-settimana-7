@@ -1,7 +1,6 @@
 const API_URL = "https://www.thesportsdb.com/api/v1/json/123/";
 
 const searchInput = document.getElementById("searchInput");
-const searchButton = document.getElementById("searchButton");
 const searchFeedback = document.getElementById("searchFeedback");
 const results = document.getElementById("results");
 const searchForm = document.getElementById("searchForm");
@@ -9,6 +8,7 @@ const teamDetails = document.getElementById("teamDetails");
 const emptyResults = document.getElementById("emptyResults");
 const favoritesContainer = document.getElementById("favorites");
 const emptyFavorites = document.getElementById("emptyFavorites");
+const sportButtons = document.querySelectorAll("[data-sport]");
 
 // CONTROLLER RICHIESTE API
 let searchController;
@@ -35,6 +35,8 @@ async function searchTeams() {
 
     searchController = new AbortController();
 
+    const currentController = searchController;
+
     // MOSTRA SPINNER DI CARICAMENTO
     searchFeedback.replaceChildren();
 
@@ -59,7 +61,7 @@ async function searchTeams() {
 
     // RICHIESTA API
     const response = await fetch(`${API_URL}searchteams.php?t=${searchTerm}`, {
-      signal: searchController.signal,
+      signal: currentController.signal,
     });
 
     const data = await response.json();
@@ -68,6 +70,10 @@ async function searchTeams() {
     await new Promise(function (resolve) {
       setTimeout(resolve, 400);
     });
+
+    if (currentController.signal.aborted) {
+      return;
+    }
 
     // NASCONDI SPINNER
     searchFeedback.replaceChildren();
@@ -89,20 +95,20 @@ async function searchTeams() {
     });
   } catch (error) {
     if (error.name !== "AbortError") {
+      // MOSTRA ALERT DI ERRORE
+      searchFeedback.replaceChildren();
 
-        // MOSTRA ALERT DI ERRORE
-        searchFeedback.replaceChildren();
+      const errorAlert = document.createElement("div");
 
-        const errorAlert = document.createElement("div");
+      errorAlert.className = "alert alert-danger";
+      errorAlert.textContent =
+        "Si è verificato un errore durante la ricerca. Riprova.";
 
-        errorAlert.className = "alert alert-danger";
-        errorAlert.textContent = "Si è verificato un errore durante la ricerca. Riprova.";
+      searchFeedback.appendChild(errorAlert);
 
-        searchFeedback.appendChild(errorAlert);
-
-        console.error("Errore:", error);
+      console.error("Errore:", error);
     }
-}
+  }
 }
 
 function createTeamCard(team, isFavorite = false) {
@@ -115,6 +121,9 @@ function createTeamCard(team, isFavorite = false) {
   const league = document.createElement("p");
   const country = document.createElement("p");
   const favoriteButton = document.createElement("button");
+  const alreadyFavorite = favorites.some(function (favorite) {
+    return favorite.idTeam === team.idTeam;
+  });
 
   // CLASSI BOOTSTRAP
   col.className = "col";
@@ -126,25 +135,35 @@ function createTeamCard(team, isFavorite = false) {
   name.className = "card-title fw-bold";
   league.className = "text-secondary mb-1";
   country.className = "text-secondary";
-  favoriteButton.className = "btn btn-outline-primary w-100 mt-3";
   if (isFavorite) {
     favoriteButton.className = "btn btn-danger w-100 mt-3";
     favoriteButton.textContent = "Rimuovi dai preferiti";
+  } else if (alreadyFavorite) {
+    favoriteButton.className = "btn btn-secondary w-100 mt-3";
+    favoriteButton.textContent = "Già nei preferiti";
+    favoriteButton.disabled = true;
   } else {
+    favoriteButton.className = "btn btn-outline-primary w-100 mt-3";
     favoriteButton.textContent = "Aggiungi ai preferiti";
   }
   favoriteButton.type = "button";
 
+  favoriteButton.dataset.teamId = team.idTeam;
+
   // EVENT LISTENER PREFERITI
-  favoriteButton.addEventListener("click", function (e) {
+favoriteButton.addEventListener("click", function (e) {
     e.stopPropagation();
 
     if (isFavorite) {
-      removeFavorite(team);
+        removeFavorite(team);
     } else {
-      addFavorite(team);
+        addFavorite(team);
+
+        favoriteButton.className = "btn btn-secondary w-100 mt-3";
+        favoriteButton.textContent = "Già nei preferiti";
+        favoriteButton.disabled = true;
     }
-  });
+});
 
   // INSERIMENTO DATI
   badge.src = team.strBadge;
@@ -193,9 +212,22 @@ function addFavorite(team) {
 function renderFavorites() {
   favoritesContainer.replaceChildren();
 
-  emptyFavorites.classList.toggle("d-none", favorites.length > 0);
+  const filteredFavorites = favorites.filter(function (team) {
+    return selectedSport === "all" || team.strSport === selectedSport;
+  });
 
-  favorites.forEach(function (team) {
+  if (favorites.length === 0) {
+    emptyFavorites.textContent =
+      "Non hai ancora salvato nessuna squadra. Cercane una qui sopra e aggiungila ai preferiti.";
+    emptyFavorites.classList.remove("d-none");
+  } else if (filteredFavorites.length === 0) {
+    emptyFavorites.textContent = "Nessuna squadra trovata per questo sport.";
+    emptyFavorites.classList.remove("d-none");
+  } else {
+    emptyFavorites.classList.add("d-none");
+  }
+
+  filteredFavorites.forEach(function (team) {
     const teamCard = createTeamCard(team, true);
     favoritesContainer.appendChild(teamCard);
   });
@@ -203,13 +235,23 @@ function renderFavorites() {
 
 // RIMOZIONE SQUADRA DAI PREFERITI
 function removeFavorite(team) {
-  favorites = favorites.filter(function (favorite) {
-    return favorite.idTeam !== team.idTeam;
-  });
+    favorites = favorites.filter(function (favorite) {
+        return favorite.idTeam !== team.idTeam;
+    });
 
-  saveFavorites();
+    saveFavorites();
 
-  renderFavorites();
+    const resultButtons = results.querySelectorAll("[data-team-id]");
+
+    resultButtons.forEach(function (button) {
+        if (button.dataset.teamId === String(team.idTeam)) {
+            button.className = "btn btn-outline-primary w-100 mt-3";
+            button.textContent = "Aggiungi ai preferiti";
+            button.disabled = false;
+        }
+    });
+
+    renderFavorites();
 }
 
 async function loadTeamEvents(team) {
@@ -300,16 +342,40 @@ function createEventCard(event, title) {
   cardBody.appendChild(homeTeam);
   cardBody.appendChild(awayTeam);
   cardBody.appendChild(eventDate);
+
+  if (event.intHomeScore !== null && event.intAwayScore !== null) {
+    cardBody.appendChild(score);
+  }
+
   card.appendChild(cardBody);
-  cardBody.appendChild(score);
 
   return card;
 }
 
-searchForm.addEventListener("submit", function (event) {
-  event.preventDefault();
+searchForm.addEventListener("submit", function (e) {
+  e.preventDefault();
 
   searchTeams();
+});
+
+// FILTRI SPORT
+
+let selectedSport = "all";
+
+sportButtons.forEach(function (button) {
+  button.addEventListener("click", function (e) {
+    selectedSport = e.currentTarget.dataset.sport;
+
+    sportButtons.forEach(function (btn) {
+      btn.classList.remove("btn-primary");
+      btn.classList.add("btn-outline-primary");
+    });
+
+    e.currentTarget.classList.remove("btn-outline-primary");
+    e.currentTarget.classList.add("btn-primary");
+
+    renderFavorites();
+  });
 });
 
 renderFavorites();
